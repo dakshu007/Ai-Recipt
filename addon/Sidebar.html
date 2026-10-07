@@ -31,60 +31,83 @@
       }
       button:disabled { background: #bdbdbd; cursor: default; }
       #status { margin-top: 12px; font-size: 12px; color: #5f6368; min-height: 16px; }
+      #quota { margin-top: 4px; font-size: 11px; color: #9aa0a6; }
       .divider { text-align: center; color: #9aa0a6; font-size: 11px; margin: 8px 0; }
     </style>
   </head>
   <body>
     <p>Paste messy text:</p>
-    <textarea id="rawText" placeholder="e.g. Uber 42.50 June 3, Staples printer paper $18.20..."></textarea>
+    <textarea id="rawText" maxlength="20000" placeholder="e.g. Uber 42.50 June 3, Staples printer paper $18.20..."></textarea>
 
     <div class="divider">— or —</div>
 
     <p>Upload a receipt / invoice photo:</p>
-    <input type="file" id="fileInput" accept="image/*">
+    <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp">
     <br><br>
     <button id="extractBtn" onclick="runExtraction()">Extract to sheet</button>
     <div id="status"></div>
+    <div id="quota"></div>
 
     <script>
+      // Mirrors the server's limits so users get instant feedback; the server
+      // enforces them regardless.
+      var MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+      var ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
       function runExtraction() {
-        const btn = document.getElementById('extractBtn');
-        const status = document.getElementById('status');
-        const text = document.getElementById('rawText').value.trim();
-        const fileInput = document.getElementById('fileInput');
+        var btn = document.getElementById('extractBtn');
+        var status = document.getElementById('status');
+        var text = document.getElementById('rawText').value.trim();
+        var fileInput = document.getElementById('fileInput');
 
         if (!text && fileInput.files.length === 0) {
           status.textContent = 'Paste some text or choose a photo first.';
           return;
         }
 
+        if (fileInput.files.length > 0) {
+          var file = fileInput.files[0];
+          if (ALLOWED_TYPES.indexOf(file.type) === -1) {
+            status.textContent = 'Please choose a JPEG, PNG, or WebP image.';
+            return;
+          }
+          if (file.size > MAX_IMAGE_BYTES) {
+            status.textContent = 'Image is too large (max 4 MB). Try a smaller photo.';
+            return;
+          }
+        }
+
         btn.disabled = true;
         status.textContent = 'Extracting…';
 
         if (fileInput.files.length > 0) {
-          const reader = new FileReader();
+          var reader = new FileReader();
           reader.onload = function (e) {
-            send(text, e.target.result.split(',')[1]);
+            send(text, e.target.result.split(',')[1], fileInput.files[0].type);
           };
           reader.readAsDataURL(fileInput.files[0]);
         } else {
-          send(text, null);
+          send(text, null, null);
         }
       }
 
-      function send(text, imageBase64) {
+      function send(text, imageBase64, mimeType) {
         google.script.run
           .withSuccessHandler(onDone)
           .withFailureHandler(onError)
-          .processInput(text, imageBase64);
+          .processInput(text, imageBase64, mimeType);
       }
 
       function onDone(result) {
-        const btn = document.getElementById('extractBtn');
-        const status = document.getElementById('status');
+        var btn = document.getElementById('extractBtn');
+        var status = document.getElementById('status');
         btn.disabled = false;
         if (result.success) {
           status.textContent = '✓ Added ' + result.count + ' row(s) to the sheet.';
+          if (result.usage) {
+            document.getElementById('quota').textContent =
+              result.usage.used + ' of ' + result.usage.limit + ' extractions used today (' + result.usage.plan + ' plan).';
+          }
           document.getElementById('rawText').value = '';
           document.getElementById('fileInput').value = '';
         } else {
